@@ -1,0 +1,7 @@
+(package topy (export func1 func2)
+
+  (def func1 (param x y) (+ 1 2))
+
+  (def func2 (param x y z) (* x y z))
+
+  (def func3 (param table) (table.flip)))

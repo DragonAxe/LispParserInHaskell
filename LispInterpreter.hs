@@ -1,58 +1,81 @@
 module Main where
 
--- I import qualified so that it's clear which
--- functions are from the parsec library:
--- import qualified Text.Parsec as Parsec
-import qualified Text.Parsec as P
+import Text.Parsec
 
--- I am the error message infix operator, used later:
-import Text.Parsec ((<?>))
 
--- Imported so we can play with applicative things later.
--- not qualified as mostly infix operators we'll be using.
-import Control.Applicative
 
--- Get the Identity monad from here:
-import Control.Monad.Identity (Identity)
+-- ###############
+-- # Data types: #
+-- ###############
 
--- Either a name/identifier or another lisp block
-data Atom = Node String | Cell Lisp
+-- The 'Atom' for this program is the "cons-cell" for common lisp.
+data Atom = Ident String | Block String [Atom]
   deriving Show
 
--- A lisp block containing a function name and list of parameters
-data Lisp = Lisp (String, [Atom])
-  deriving Show
 
--- MAIN, where it all happens.
+
+-- #################
+-- # IO functions: #
+-- #################
+
+-- MAIN, where it all starts.
 main = do
-  let result = P.parse entireFile
-                       "(source)"
-                       "(print (cat hello hi) (abd) (hi) endprint)"
+  let filename = "testLisp.txt"
+  result <- parseFromFile entireFile filename
   case result of
     Right v -> putStrLn ("success: " ++ show v)
-    Left err -> putStrLn ("whoops, error: " ++ show err)
+    Left err -> do
+      fileString <- readFile filename
+      putStrLn (
+        "whoops, error: "
+        ++ show err
+        ++ "\n"
+        ++ (lines fileString) !! (getErrorRowPos err - 1)
+        ++ "\n"
+        ++ getRowArrow err)
+
+-- Run a parser over the given file.
+parseFromFile p fname = do
+  input <- readFile fname
+  return (runParser p () fname input)
+
+
+
+-- #####################
+-- # Parsec functions: #
+-- #####################
 
 -- Parse entire file up until the end of file (EOF)
 -- with optional buffering whitespace on beginning and end.
-entireFile = parseSeparator *> lisp <* parseSeparator <* P.eof
+entireFile = spaces *> parseAtom <* spaces <* eof
 
--- Parse a matching set of parenthesis containing innerLisp.
-lisp = Lisp <$> P.between (P.char '(' <?> "[opening paren]")
-                          (P.char ')' <?> "[closing paren]")
-                          innerLisp
+-- Parse an atom that can be either an identity, or a block.
+parseAtom = choice [
+  (try (between
+    (char '(')
+    (char ')')
+    (Block <$> parseIdent
+             -- Parse either 1+ spaces, or and end paren ')'.
+             <* (try (many1 space) <|> lookAhead (many1 (char ')')))
+           <*> sepBy parseAtom spaces))),
+  Ident <$> parseIdent]
 
--- Parse text inside of a matching set of parenthesis consisting of an
--- identifier followed by an optional set of parameters.
-innerLisp = (,) <$> parseIdentifier
-                <*> (parseSeparator
-                     >> P.sepBy parseParam (parseSeparator))
+-- Parses a single identifier consisting of letters, numbers,
+-- and some special characters.
+parseIdent = many1 (choice [letter, digit, oneOf "!@#$%^&*+."]
+  <?> "letter, digit, symbol")
 
--- Parses a single parameter inside a lisp block.
-parseParam = Cell <$> (P.try lisp) P.<|> Node <$> (P.try parseIdentifier)
-  <?> "[a parameter (one of Param or SubLisp)]"
 
--- Parses a single name/identifier, (basically an atom, or function name).
-parseIdentifier = P.many1 (P.letter <?> "[valid name/identifier]")
 
--- Parses any kind of whitespace.
-parseSeparator = P.spaces <?> "[whitespace]"
+-- #############################
+-- # Error handling functions: #
+-- #############################
+
+getRowArrow :: ParseError -> String
+getRowArrow err = replicate (getErrorColPos err - 1) '-' ++ "^"
+
+getErrorRowPos :: ParseError -> Int
+getErrorRowPos err = (sourceLine . errorPos $ err)
+
+getErrorColPos :: ParseError -> Int
+getErrorColPos err = (sourceColumn . errorPos $ err)
